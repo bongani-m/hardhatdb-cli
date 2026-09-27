@@ -1,0 +1,176 @@
+on: [push, pull_request]
+name: Test hardhatdb-cli
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  # Build and run the tests that need no database, on every platform hardhatdb-cli
+  # supports. These catch the platform problems, which is where hardhatdb-cli breaks
+  # most often: the driver set differs per platform and cgo has to link.
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-26.04-arm
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get install -y build-essential libicu-dev unixodbc unixodbc-dev
+      # The duckdb driver links prebuilt static archives built by MinGW-Builds
+      # GCC 14.2.0 for x86_64, UCRT, posix-seh, and linking needs a toolchain
+      # matching all three. MSYS2 ships a newer gcc, which fails at link on
+      # __emutls_v._ZSt11__once_call, so the version is pinned with winget.
+      - name: Install MinGW toolchain for duckdb
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          winget install --id BrechtSanders.WinLibs.POSIX.UCRT.LLVM --exact --silent `
+            --accept-package-agreements --accept-source-agreements
+          $bin = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT.LLVM_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin'
+          if (-not (Test-Path $bin)) { throw "the toolchain is not at $bin" }
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # A mismatched toolchain only shows at link, with undefined symbols that
+      # name neither the runtime nor the version as the cause. Say it here.
+      #
+      # Do not test gcc -dumpmachine: it reports x86_64-w64-mingw32 for the
+      # MSVCRT and the UCRT builds alike. The UCRT headers define _UCRT.
+      - name: Check the toolchain
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          gcc --version
+          gcc -dumpmachine
+          # The duckdb archives were built by MinGW-Builds GCC 14.2.0 for UCRT
+          # with posix-seh. A mismatch on either axis only appears at link,
+          # with undefined symbols that name neither as the cause, so describe
+          # the toolchain here where it can be read plainly.
+          #
+          # This reports and never fails. The build that follows is the real
+          # test, and a wrong guess here must not be able to block a release.
+          #
+          # _UCRT comes from the UCRT headers rather than from the compiler,
+          # so a header has to be included before asking for it. Do not test
+          # gcc -dumpmachine either: it reports x86_64-w64-mingw32 for the
+          # MSVCRT and UCRT builds alike, because the target triple does not
+          # carry the runtime.
+          ucrt=no
+          if echo '#include <stdio.h>' | gcc -E -dM - 2>/dev/null | grep -q '^#define _UCRT'; then
+            ucrt=yes
+          fi
+          major=$(gcc -dumpversion 2>/dev/null | cut -d. -f1)
+          echo "runtime: UCRT=$ucrt  gcc major: $major"
+          if [ "$ucrt" != "yes" ]; then
+            echo "warning: this gcc targets MSVCRT, and the duckdb archives need UCRT." >&2
+            echo "         expect undefined references to __stdio_common_vsnprintf_s." >&2
+          fi
+          if [ "$major" != "14" ]; then
+            echo "warning: this gcc is $major, and the duckdb archives need 14." >&2
+            echo "         a newer libstdc++ drops emulated TLS, so expect an" >&2
+            echo "         undefined reference to __emutls_v._ZSt11__once_call." >&2
+          fi
+      - name: Build
+        shell: bash
+        run: ./build.sh -b
+      - name: Test
+        shell: bash
+        run: |
+          go test -tags "$(./build.sh -T)" \
+            ./stmt/... \
+            ./env/... \
+            ./handler/... \
+            ./drivers/completer/... \
+            ./drivers/metadata \
+            ./drivers/sqlite3/sqshared/...
+      # The chart renderer is behind the charts build tag, so the job above
+      # never links it. Test it here: it is the one package whose failure the
+      # rest of the matrix cannot see, and it needs no database.
+      - name: Test the chart renderer
+        shell: bash
+        run: go test ./metacmd/charts/...
+
+  # Record terminal sessions against a real pseudo-terminal. hardhatdb-cli turns off
+  # its prompt, line editor and colour when it does not own a terminal, so
+  # nothing else covers them. Windows has no pseudo-terminal device file, so
+  # it is absent here rather than skipped.
+  terminal:
+    name: Terminal sessions on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Record and compare
+        run: go test -v -tags "sqlite3 no_base" -run TestCLI .
+
+  # Tests that start their own containers through dockertest. These run on
+  # Linux alone, because the hosted macOS and Windows runners have no Linux
+  # container runtime.
+  #
+  # -p 1 is required. Go runs packages in parallel by default, three of these
+  # packages each start a SQL Server container, and three at once exhaust the
+  # memory of a runner.
+  databases:
+    name: Database tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install packages
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get install -y build-essential libicu-dev unixodbc unixodbc-dev
+      - name: Test
+        run: |
+          go test -p 1 -timeout 30m -tags "$(./build.sh -T)" \
+            ./drivers/ \
+            ./drivers/clickhouse/... \
+            ./drivers/metadata/informationschema/... \
+            ./drivers/metadata/postgres/... \
+            ./drivers/sqlserver/...
+
+  # Build with every driver enabled. This is the build that breaks when a
+  # driver is added or a dependency moves, and it is slow, so it is its own
+  # job rather than part of the matrix.
+  build-all:
+    name: Build with all drivers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install packages
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get install -y build-essential libicu-dev unixodbc unixodbc-dev
+      - name: Build
+        run: ./build.sh -b -t all
