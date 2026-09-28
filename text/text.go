@@ -105,6 +105,12 @@ var (
 	UsageTemplate             = `Usage:
   {{.UseLine}}
 
+Commands:
+  load SRC DST DATABASE...       copy schema and rows from MySQL into HardhatDB
+  replicate SRC DST DATABASE...  start replication from a MySQL binlog
+  status DST                     show replica status
+  cutover DST                    wait until the replica has caught up, then stop it
+
 Arguments:
   DSN   database url or connection name
 

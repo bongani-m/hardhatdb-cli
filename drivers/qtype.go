@@ -22,6 +22,7 @@ var queryMap = map[string]bool{
 	"CALL":       true,
 	"FROM":       true,
 	"UNPIVOT":    true,
+	"BACKUP":     true, // HardhatDB backup returns the Raft index
 }
 
 // execMap is the map of SQL prefixes to execute.
@@ -32,6 +33,8 @@ var queryMap = map[string]bool{
 // documentation for any new queries introduced by PostgreSQL need to be
 // manually scrutinized for variations.
 var execMap = map[string]bool{
+	// hardhatdb
+	"RESTORE BINLOG": true, // replay a backup's binlog tail
 	// cassandra
 	"ALTER KEYSPACE":  true, // alter a keyspace
 	"CREATE KEYSPACE": true, // create a keyspace

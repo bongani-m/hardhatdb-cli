@@ -15,6 +15,7 @@ require (
 	github.com/apache/calcite-avatica-go/v5 v5.4.0
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/beltran/gohive/v2 v2.1.0
+	github.com/bongani-m/hardhatdb/go v0.0.0
 	github.com/btnguyen2k/gocosmos v1.1.0
 	github.com/btnguyen2k/godynamo v1.3.0
 	github.com/chaisql/chai v0.18.0
@@ -164,11 +165,16 @@ require (
 	github.com/databricks/databricks-sql-kernel-bindings/lib/linux_arm64 v1.1.0 // indirect
 	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_amd64 v1.1.0 // indirect
 	github.com/databricks/databricks-sql-kernel-bindings/lib/windows_arm64 v1.1.0 // indirect
+	github.com/dgraph-io/badger/v4 v4.9.4 // indirect
+	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.0 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
+	github.com/dolthub/go-mysql-server v0.0.0 // indirect
+	github.com/dolthub/jsonpath v0.0.2-0.20260807003725-336cd89c1c76 // indirect
+	github.com/dolthub/vitess v0.0.0-20260916192104-15c5c4158b37 // indirect
 	github.com/dop251/goja v0.0.0-20260911104922-fabc3b8078ad // indirect
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14 // indirect
 	github.com/dromara/carbon/v2 v2.6.17 // indirect
@@ -343,7 +349,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect
 	howett.net/plist v1.0.1 // indirect
 	modernc.org/b v1.1.0 // indirect
@@ -360,3 +366,7 @@ require (
 	modernc.org/strutil v1.2.1 // indirect
 	modernc.org/zappy v1.1.0 // indirect
 )
+
+replace github.com/bongani-m/hardhatdb/go => ../hardhatdb/go
+
+replace github.com/dolthub/go-mysql-server => ../go-mysql-server

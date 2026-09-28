@@ -11,6 +11,7 @@ import (
 
 	"github.com/bongani-m/hardhatdb-cli/env"
 	"github.com/bongani-m/hardhatdb-cli/handler"
+	"github.com/bongani-m/hardhatdb-cli/migrate"
 	"github.com/bongani-m/hardhatdb-cli/rline"
 	"github.com/bongani-m/hardhatdb-cli/text"
 	"github.com/go-git/go-billy/v5"
@@ -212,6 +213,11 @@ func New(cliargs []string) ContextExecutor {
 	} {
 		flags.Lookup(name).Hidden = true
 	}
+
+	for _, cmd := range migrate.Commands() {
+		c.AddCommand(cmd)
+	}
+	c.AddCommand(restoreCommand())
 
 	return c
 }
