@@ -15,7 +15,7 @@ require (
 	github.com/apache/calcite-avatica-go/v5 v5.4.0
 	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/beltran/gohive/v2 v2.1.0
-	github.com/bongani-m/hardhatdb/go v0.0.0
+	github.com/bongani-m/hardhatdb/go v0.0.0-20260928044346-f1951aab24ca
 	github.com/btnguyen2k/gocosmos v1.1.0
 	github.com/btnguyen2k/godynamo v1.3.0
 	github.com/chaisql/chai v0.18.0
@@ -367,6 +367,4 @@ require (
 	modernc.org/zappy v1.1.0 // indirect
 )
 
-replace github.com/bongani-m/hardhatdb/go => ../hardhatdb/go
-
-replace github.com/dolthub/go-mysql-server => ../go-mysql-server
+replace github.com/dolthub/go-mysql-server => github.com/bongani-m/go-mysql-server v0.0.0-20260927224335-3d756394e188
