@@ -13,7 +13,23 @@ $ hardhatdb-cli hardhatdb://root@127.0.0.1:3306/mydb
 
 # cluster node that requires TLS
 $ hardhatdb-cli 'hardhatdb://root@127.0.0.1:3306/mydb?tls=skip-verify'
+
+# copy appdb from MySQL into an empty HardhatDB
+$ hardhatdb-cli load mysql://root:secret@127.0.0.1:3306 hardhatdb://root:secret@127.0.0.1:3307 appdb
+
+# follow the MySQL binlog when every GTID is still available
+$ hardhatdb-cli replicate mysql://repl:secret@mysql.example:3306 hardhatdb://root:secret@127.0.0.1:3307 appdb
+$ hardhatdb-cli status hardhatdb://root:secret@127.0.0.1:3307
+$ hardhatdb-cli cutover hardhatdb://root:secret@127.0.0.1:3307
+
+# backup on the leader, then load it into an empty directory while that server is stopped
+$ hardhatdb-cli hardhatdb://root@127.0.0.1:3306 -c "BACKUP TO '/var/backups/1'"
+$ hardhatdb-cli restore --from /var/backups/1 --data /data/hardhatdb
 ```
+
+`load` and `replicate` are separate. A load does not record the source GTID set, so do not start the replica after a load. `replicate` refuses that destination. The replica connects to MySQL with TLS disabled.
+
+`BACKUP TO` and `RESTORE BINLOG FROM ... AFTER n` are SQL. The path is on the server that runs the statement. A follower forwards `BACKUP TO`, so the directory is created on the leader. `BACKUP TO` prints the Raft index to pass as `n`. After `restore` loads `state.bin` into an empty data directory, start that process with a fresh Raft directory and run `RESTORE BINLOG FROM` on its leader. `restore` refuses a data directory that already exists, including one a running server still has open.
 
 The shell is modelled on PostgreSQL's `psql`. It keeps usql's [variables][variables], [backticks][backticks], [backslash commands][commands], [copying between databases][copying], [syntax highlighting][highlighting], [context-based completion][completion], and [terminal graphics][termgraphics].
 
@@ -83,20 +99,20 @@ $ go install -tags all github.com/bongani-m/hardhatdb-cli@latest
 
 ## Database Support
 
-`usql` works with all Go standard library compatible SQL drivers supported by
+`hardhatdb-cli` works with all Go standard library compatible SQL drivers supported by
 [`github.com/xo/dburl`][dburl].
 
-The list of drivers that `usql` was built with can be displayed with the
+The list of drivers that `hardhatdb-cli` was built with can be displayed with the
 [`\drivers` command][commands]:
 
 ```sh
-$ cd $GOPATH/src/github.com/xo/usql
+$ cd $GOPATH/src/github.com/bongani-m/hardhatdb-cli
 
 # build excluding the base drivers, and including cassandra and moderncsqlite
 $ go build -tags 'no_postgres no_oracle no_sqlserver no_sqlite3 cassandra moderncsqlite'
 
 # show built driver support
-$ ./usql -c '\drivers'
+$ ./hardhatdb-cli -c '\drivers'
 Available Drivers:
   cql [ca, scy, scylla, datastax, cassandra]
   memsql (mysql) [me]
@@ -106,16 +122,16 @@ Available Drivers:
   vitess (mysql) [vt]
 ```
 
-The above shows that `usql` was built with only the `mysql`, `cassandra` (ie,
+The above shows that `hardhatdb-cli` was built with only the `mysql`, `cassandra` (ie,
 `cql`), and `moderncsqlite` drivers. The output above reflects information
-about the drivers available to `usql`, specifically the internal driver name,
+about the drivers available to `hardhatdb-cli`, specifically the internal driver name,
 its primary URL scheme, the driver's available scheme aliases (shown in
 `[...]`), and the real/underlying driver (shown in `(...)`) for wire compatible
 drivers.
 
 ### Supported Database Schemes and Aliases
 
-The following are the [Go SQL drivers][go-sql] that `usql` supports, the
+The following are the [Go SQL drivers][go-sql] that `hardhatdb-cli` supports, the
 associated database, scheme / build tag, and scheme aliases:
 
 <!-- DRIVER DETAILS START -->
@@ -247,31 +263,31 @@ connecting to a database via the command-line or with the [`\connect` and
 $ hardhatdb-cli hardhatdb://root@127.0.0.1:3306/mydb
 
 # connect to a vitess database:
-$ usql vt://user:pass@host:3306/mydatabase
+$ hardhatdb-cli vt://user:pass@host:3306/mydatabase
 
-$ usql
+$ hardhatdb-cli
 (not connected)=> \c vitess://user:pass@host:3306/mydatabase
 
-$ usql
+$ hardhatdb-cli
 (not connected)=> \copy csvq://. pg://localhost/ 'select * ....' 'myTable'
 ```
 
 See [the section below on connecting to databases][connecting] for further
-details building DSNs/URLs for use with `usql`.
+details building DSNs/URLs for use with `hardhatdb-cli`.
 
 ## Using
 
-After [installing][], `usql` can be used similarly to the following:
+After [installing][], `hardhatdb-cli` can be used similarly to the following:
 
 ```sh
 # connect to a postgres database
-$ usql postgres://booktest@localhost/booktest
+$ hardhatdb-cli postgres://booktest@localhost/booktest
 
 # connect to an oracle database
-$ usql oracle://user:pass@host/oracle.sid
+$ hardhatdb-cli oracle://user:pass@host/oracle.sid
 
 # connect to a postgres database and run the commands contained in script.sql
-$ usql pg://localhost/ -f script.sql
+$ hardhatdb-cli pg://localhost/ -f script.sql
 ```
 
 ### Command-line Options
@@ -284,6 +300,13 @@ hardhatdb-cli, a command-line interface for HardhatDB and other SQL databases
 
 Usage:
   hardhatdb-cli [flags]... [DSN]
+
+Commands:
+  load SRC DST DATABASE...       copy schema and rows from MySQL into HardhatDB
+  replicate SRC DST DATABASE...  start replication from a MySQL binlog
+  status DST                     show replica status
+  cutover DST                    wait until the replica has caught up, then stop it
+  restore                        load a HardhatDB backup into an empty data directory
 
 Arguments:
   DSN   database url or connection name
@@ -319,10 +342,10 @@ Flags:
 
 ### Connecting to Databases
 
-`usql` opens a database connection by [parsing a URL][dburl] and passing the
+`hardhatdb-cli` opens a database connection by [parsing a URL][dburl] and passing the
 resulting connection string to [a database driver][databases]. Database
 connection strings (aka "data source name" or DSNs) have the same parsing rules
-as URLs, and can be passed to `usql` via command-line, or to the [`\connect`,
+as URLs, and can be passed to `hardhatdb-cli` via command-line, or to the [`\connect`,
 `\c`, and `\copy` commands][commands].
 
 Database connections can be defined with [the `\cset` command][connection-vars]
@@ -368,7 +391,7 @@ Where the above are:
 
 #### Driver Aliases
 
-`usql` supports the same driver names and aliases as [the `dburl`
+`hardhatdb-cli` supports the same driver names and aliases as [the `dburl`
 package][dburl]. Databases have at least one or more aliases. See [`dburl`'s
 scheme documentation][dburl-schemes] for a list of all supported aliases.
 
@@ -386,23 +409,23 @@ for available options.
 
 #### Paths on Disk
 
-If a URL does not have a `driver:` scheme, `usql` will check if it is a path on
-disk. If the path exists, `usql` will attempt to use an appropriate database
+If a URL does not have a `driver:` scheme, `hardhatdb-cli` will check if it is a path on
+disk. If the path exists, `hardhatdb-cli` will attempt to use an appropriate database
 driver to open the path.
 
-When the path is a Unix Domain Socket, `usql` will attempt to open it with the
-MySQL driver. When the path is a directory, `usql` will attempt to open it
+When the path is a Unix Domain Socket, `hardhatdb-cli` will attempt to open it with the
+MySQL driver. When the path is a directory, `hardhatdb-cli` will attempt to open it
 using the PostgreSQL driver. And, lastly, when the path is a regular file,
-`usql` will attempt to open the file using the SQLite3 or DuckDB drivers.
+`hardhatdb-cli` will attempt to open the file using the SQLite3 or DuckDB drivers.
 
 #### Driver Defaults
 
 As with URLs, most components in the URL are optional and many components can
-be left out. `usql` will attempt connecting using defaults where possible:
+be left out. `hardhatdb-cli` will attempt connecting using defaults where possible:
 
 ```sh
 # connect to postgres using the local $USER and the unix domain socket in /var/run/postgresql
-$ usql pg://
+$ hardhatdb-cli pg://
 ```
 
 See the relevant documentation [on database drivers][databases] for more
@@ -411,70 +434,70 @@ information.
 ### Connection Examples
 
 The following are example connection strings and additional ways to connect to
-databases using `usql`:
+databases using `hardhatdb-cli`:
 
 ```sh
 # connect to a postgres database
-$ usql pg://user:pass@host/dbname
-$ usql pgsql://user:pass@host/dbname
-$ usql postgres://user:pass@host:port/dbname
-$ usql pg://
-$ usql /var/run/postgresql
-$ usql pg://user:pass@host/dbname?sslmode=disable # Connect without SSL
+$ hardhatdb-cli pg://user:pass@host/dbname
+$ hardhatdb-cli pgsql://user:pass@host/dbname
+$ hardhatdb-cli postgres://user:pass@host:port/dbname
+$ hardhatdb-cli pg://
+$ hardhatdb-cli /var/run/postgresql
+$ hardhatdb-cli pg://user:pass@host/dbname?sslmode=disable # Connect without SSL
 
 # connect to a mysql database
-$ usql my://user:pass@host/dbname
-$ usql mysql://user:pass@host:port/dbname
-$ usql my://
-$ usql /var/run/mysqld/mysqld.sock
+$ hardhatdb-cli my://user:pass@host/dbname
+$ hardhatdb-cli mysql://user:pass@host:port/dbname
+$ hardhatdb-cli my://
+$ hardhatdb-cli /var/run/mysqld/mysqld.sock
 
 # connect to a sqlserver database
-$ usql sqlserver://user:pass@host/instancename/dbname
-$ usql ms://user:pass@host/dbname
-$ usql ms://user:pass@host/instancename/dbname
-$ usql mssql://user:pass@host:port/dbname
-$ usql ms://
+$ hardhatdb-cli sqlserver://user:pass@host/instancename/dbname
+$ hardhatdb-cli ms://user:pass@host/dbname
+$ hardhatdb-cli ms://user:pass@host/instancename/dbname
+$ hardhatdb-cli mssql://user:pass@host:port/dbname
+$ hardhatdb-cli ms://
 
 # connect to a sqlserver database using Windows domain authentication
-$ runas /user:ACME\wiley /netonly "usql mssql://host/dbname/"
+$ runas /user:ACME\wiley /netonly "hardhatdb-cli mssql://host/dbname/"
 
 # connect to a oracle database
-$ usql or://user:pass@host/sid
-$ usql oracle://user:pass@host:port/sid
-$ usql or://
+$ hardhatdb-cli or://user:pass@host/sid
+$ hardhatdb-cli oracle://user:pass@host:port/sid
+$ hardhatdb-cli or://
 
 # connect to a cassandra database
-$ usql ca://user:pass@host/keyspace
-$ usql cassandra://host/keyspace
-$ usql cql://host/
-$ usql ca://
+$ hardhatdb-cli ca://user:pass@host/keyspace
+$ hardhatdb-cli cassandra://host/keyspace
+$ hardhatdb-cli cql://host/
+$ hardhatdb-cli ca://
 
 # connect to an alibaba maxcompute project over https, or over http with mc+http:
-$ usql "mc://accessid:accesskey@service.cn-hangzhou.maxcompute.aliyun.com/api?project=myproject"
-$ usql "mc+http://accessid:accesskey@host/api?project=myproject"
+$ hardhatdb-cli "mc://accessid:accesskey@service.cn-hangzhou.maxcompute.aliyun.com/api?project=myproject"
+$ hardhatdb-cli "mc+http://accessid:accesskey@host/api?project=myproject"
 
 # Note: the project option is required. The curr_project and scheme options of
 # the previous maxcompute driver no longer work, and any option the driver does
 # not recognize is sent to the server as an SQL hint.
 
 # connect to a sqlite database that exists on disk
-$ usql dbname.sqlite3
+$ hardhatdb-cli dbname.sqlite3
 
 # Note: when connecting to a SQLite database, if the "driver://" or
 # "driver:" scheme/alias is omitted, the file must already exist on disk.
 #
 # if the file does not yet exist, the URL must incorporate file:, sq:, sqlite3:,
-# or any other recognized sqlite3 driver alias to force usql to create a new,
+# or any other recognized sqlite3 driver alias to force hardhatdb-cli to create a new,
 # empty database at the specified path:
-$ usql sq://path/to/dbname.sqlite3
-$ usql sqlite3://path/to/dbname.sqlite3
-$ usql file:/path/to/dbname.sqlite3
+$ hardhatdb-cli sq://path/to/dbname.sqlite3
+$ hardhatdb-cli sqlite3://path/to/dbname.sqlite3
+$ hardhatdb-cli file:/path/to/dbname.sqlite3
 
-# connect to a named connection in $HOME/.config/usql/config.yaml
-$ cat $HOME/.config/usql/config.yaml
+# connect to a named connection in $HOME/.config/hardhatdb-cli/config.yaml
+$ cat $HOME/.config/hardhatdb-cli/config.yaml
 connections:
   my_named_connection: sqlserver://user:pass@localhost/
-$ usql my_named_connection
+$ hardhatdb-cli my_named_connection
 
 # connect with ODBC driver (requires building with odbc tag)
 $ cat /etc/odbcinst.ini
@@ -493,8 +516,8 @@ CommLog=1
 UsageCount=1
 
 # connect to db2, postgres databases using odbc config above
-$ usql odbc+DB2://user:pass@localhost/dbname
-$ usql odbc+PostgreSQL+ANSI://user:pass@localhost/dbname?TraceFile=/path/to/trace.log
+$ hardhatdb-cli odbc+DB2://user:pass@localhost/dbname
+$ hardhatdb-cli odbc+PostgreSQL+ANSI://user:pass@localhost/dbname?TraceFile=/path/to/trace.log
 ```
 
 See the [section on connection variables][connection-vars] for information on
@@ -506,7 +529,7 @@ The interactive interpreter reads queries and [backslash meta (`\`) commands][co
 sending the query to the connected database:
 
 ```sh
-$ usql sqlite://example.sqlite3
+$ hardhatdb-cli sqlite://example.sqlite3
 Connected with driver sqlite3 (SQLite3 3.17.0)
 Type "help" for help.
 
@@ -549,8 +572,8 @@ A command takes one or more parameters. A parameter can be quoted with either
 
 ### Backslash Commands
 
-`usql` supports interleaved backslash (`\`) meta commands to modify or alter
-the way that `usql` interprets queries, formats its output, and changes the
+`hardhatdb-cli` supports interleaved backslash (`\`) meta commands to modify or alter
+the way that `hardhatdb-cli` interprets queries, formats its output, and changes the
 resulting interactive flow.
 
 ```sh
@@ -561,20 +584,20 @@ pg:user@localhost=> select * from my_table \G
 Available backslash meta commands can be displayed with `\?`:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 Type "help" for help.
 
 (not connected)=> \?
 General
-  \q                                quit usql
+  \q                                quit hardhatdb-cli
   \quit                             alias for \q
-  \copyright                        show usage and distribution terms for usql
-  \drivers                          show database drivers available to usql
+  \copyright                        show usage and distribution terms for hardhatdb-cli
+  \drivers                          show database drivers available to hardhatdb-cli
 
 Help
-  \? [commands]                     show help on usql's meta (backslash) commands
-  \? options                        show help on usql command-line options
-  \? variables                      show help on special usql variables
+  \? [commands]                     show help on hardhatdb-cli's meta (backslash) commands
+  \? options                        show help on hardhatdb-cli command-line options
+  \? variables                      show help on special hardhatdb-cli variables
 
 Connection
   \c DSN or \c NAME                 connect to dsn or named database connection
@@ -593,7 +616,7 @@ Query Execute
   \ego                              alias for \G
   \gx [(OPTIONS)] [FILE]            as \g, but forces expanded output mode
   \gexec                            execute query and execute each value of the result
-  \gset [PREFIX]                    execute query and store results in usql variables
+  \gset [PREFIX]                    execute query and store results in hardhatdb-cli variables
   \bind [PARAM]...                  set query parameters
   \timing [on|off]                  toggle timing of commands
 
@@ -635,9 +658,9 @@ Informational
   \ss[+] [TABLE|QUERY] [k]          show stats for a table or a query
 
 Variables
-  \set [NAME [VALUE]]               set usql application variable, or show all usql application
+  \set [NAME [VALUE]]               set hardhatdb-cli application variable, or show all hardhatdb-cli application
                                     variables if no parameters
-  \unset NAME                       unset (delete) usql application variable
+  \unset NAME                       unset (delete) hardhatdb-cli application variable
   \pset [NAME [VALUE]]              set table print formatting option, or show all print
                                     formatting options if no parameters
   \a                                toggle between unaligned and aligned output mode
@@ -690,7 +713,7 @@ Parameters passed to commands [can be backticked][backticks].
 
 ## Features and Compatibility
 
-An overview of `usql`'s features, functionality, and compatibility with `psql`:
+An overview of `hardhatdb-cli`'s features, functionality, and compatibility with `psql`:
 
 - [Configuration][config]
 - [Variables][variables]
@@ -700,19 +723,19 @@ An overview of `usql`'s features, functionality, and compatibility with `psql`:
 - [Time Formatting][timefmt]
 - [Context Completion][completion]
 - [Host Connection Information](#host-connection-information)
-- [Passwords][usqlpass]
-- [Runtime Configuration (RC) File][usqlrc]
+- [Passwords][hardhatdb-clipass]
+- [Runtime Configuration (RC) File][hardhatdb-clirc]
 
-The `usql` project's goal is to support as much of `psql`'s core features and
+The `hardhatdb-cli` project's goal is to support as much of `psql`'s core features and
 functionality, and aims to be as compatible as possible - [contributions are
 always appreciated][contributing]!
 
 #### Configuration
 
-During its initialization phase, `usql` reads a standard [YAML configuration][yaml]
-file [`config.yaml`](_samples/config.yaml). On Windows this is `%AppData%/usql/config.yaml`,
-on macOS this is `$HOME/Library/Application Support/usql/config.yaml`, and on
-Linux and other Unix systems this is normally `$HOME/.config/usql/config.yaml`.
+During its initialization phase, `hardhatdb-cli` reads a standard [YAML configuration][yaml]
+file [`config.yaml`](_samples/config.yaml). On Windows this is `%AppData%/hardhatdb-cli/config.yaml`,
+on macOS this is `$HOME/Library/Application Support/hardhatdb-cli/config.yaml`, and on
+Linux and other Unix systems this is normally `$HOME/.config/hardhatdb-cli/config.yaml`.
 
 ##### `connections:`
 
@@ -736,7 +759,7 @@ Defined `connections:` can be used on the command-line with `\connect`, `\c`,
 `\copy`, and [other commands][commands]:
 
 ```sh
-$ usql my_godror_conn
+$ hardhatdb-cli my_godror_conn
 Connected with driver godror (Oracle Database 23.0.0.0.0)
 Type "help" for help.
 
@@ -767,7 +790,7 @@ available configuration options.
 
 #### Variables
 
-`usql` supports [runtime][runtime-vars], [connection][connection-vars], and
+`hardhatdb-cli` supports [runtime][runtime-vars], [connection][connection-vars], and
 [display formatting][print-vars] variables that can be `\set`, `\cset`, or
 `\pset` respectively.
 
@@ -889,7 +912,7 @@ highlighting][highlighting] can be modified through special variables like
 [`SYNTAX_HL`][highlighting].
 
 Use the `\? variables` [command][commands] to display variable help information
-and to list special variables recognized by `usql`:
+and to list special variables recognized by `hardhatdb-cli`:
 
 ```sh
 (not connected)=> \? variables
@@ -919,7 +942,7 @@ pg:booktest@localhost=>
 
 #### Copying Between Databases
 
-`usql` provides a `\copy` command that reads data from a source database DSN
+`hardhatdb-cli` provides a `\copy` command that reads data from a source database DSN
 and writes to a destination database DSN:
 
 ```sh
@@ -943,7 +966,7 @@ Any valid URL or DSN name maybe used for the source and destination database:
 
 > **Note**
 >
-> `usql`'s `\copy` is distinct from and <b><u>does not</u></b> function like
+> `hardhatdb-cli`'s `\copy` is distinct from and <b><u>does not</u></b> function like
 > `psql`'s `\copy`.
 
 <hr/>
@@ -977,7 +1000,7 @@ The usual rules for [variables, interpolation, and quoting][variables] apply to
 `QUERY` and `TABLE` **_must_** be quoted when containing spaces:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 (not connected)=> echo :SOURCE_DSN :DESTINATION_DSN
 pg://postgres:P4ssw0rd@localhost/ mysql://localhost
 (not connected)=> \copy :SOURCE_DSN :DESTINATION_DSN 'select * from mySourceTable' 'myDestination(colA, colB)'
@@ -990,7 +1013,7 @@ The `QUERY` **_must_** return the same number of columns as defined by
 the `TABLE` expression:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 (not connected)=> \copy csvq:. sq:test.db 'select * from authors' authors
 error: failed to prepare insert query: 2 values for 1 columns
 (not connected)=> \copy csvq:. sq:test.db 'select name from authors' authors(name)
@@ -1008,7 +1031,7 @@ functionality to cast columns to a datatype that will work for `TABLE`'s
 columns:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 (not connected)=> \copy postgres://user:pass@localhost mysql://user:pass@localhost 'SELECT uuid_column::TEXT FROM myPgTable' myMyTable
 COPY 1
 ```
@@ -1028,7 +1051,7 @@ book_id,author_id,title
 1,1,I Robot
 2,2,Carrie
 3,2,Cujo
-$ usql
+$ hardhatdb-cli
 (not connected)=> -- setting variables to make connections easier
 (not connected)=> \set SOURCE_DSN csvq://.
 (not connected)=> \set DESTINATION_DSN sqlite3:booktest.db
@@ -1079,21 +1102,21 @@ sq:booktest.db=> select * from books;
 
 ###### Reusing Connections with Copy
 
-The `\copy` command (and all `usql` commands) [works with variables][variables].
+The `\copy` command (and all `hardhatdb-cli` commands) [works with variables][variables].
 When scripting, or when needing to perform multiple `\copy` operations from/to
 multiple sources/destinations, the best practice is to `\set` connection
-variables either in a script or in [the `$HOME/.hardhatdb-clirc` RC script][usqlrc].
+variables either in a script or in [the `$HOME/.hardhatdb-clirc` RC script][hardhatdb-clirc].
 
 Similarly, passwords can be stored for easy reuse (and kept out of scripts) by
-storing in [the `$HOME/.usqlpass` password file][usqlpass].
+storing in [the `$HOME/.hardhatdb-clipass` password file][hardhatdb-clipass].
 
 For example:
 
 ```sh
-$ cat $HOME/.usqlpass
+$ cat $HOME/.hardhatdb-clipass
 postgres:*:*:*:postgres:P4ssw0rd
 godror:*:*:*:system:P4ssw0rd
-$ usql
+$ hardhatdb-cli
 Type "help" for help.
 
 (not connected)=> \set pglocal postgres://postgres@localhost:49153?sslmode=disable
@@ -1115,23 +1138,23 @@ highlighting:
 | `SYNTAX_HL_OVERRIDE_BG` | `true`                          | `true` or `false` | enables overriding the background color of the chroma styles |
 | `SYNTAX_HL_STYLE`       | `monokai`                       | style name        | [Chroma style name][chroma-style]                            |
 
-The `SYNTAX_*` variables are regular `usql` variables, and can be `\set` and
+The `SYNTAX_*` variables are regular `hardhatdb-cli` variables, and can be `\set` and
 `\unset`:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 (not connected)=> \set SYNTAX_HL_STYLE dracula
 (not connected)=> \unset SYNTAX_HL_OVERRIDE_BG
 ```
 
 #### Context Completion
 
-When using the interactive shell, context completion is available in `usql` by
+When using the interactive shell, context completion is available in `hardhatdb-cli` by
 hitting the `<Tab>` key. For example, hitting `<Tab>` can complete some parts
 of `SELECT` queries on a PostgreSQL databases:
 
 ```sh
-$ usql
+$ hardhatdb-cli
 Connected with driver postgres (PostgreSQL 14.4 (Debian 14.4-1.pgdg110+1))
 Type "help" for help.
 
@@ -1143,7 +1166,7 @@ Or, for example completing [backslash commands][commands] while connected to a
 database:
 
 ```sh
-$ usql my://
+$ hardhatdb-cli my://
 Connected with driver mysql (10.8.3-MariaDB-1:10.8.3+maria~jammy)
 Type "help" for help.
 
@@ -1159,11 +1182,11 @@ Command completion can be canceled with `<Control-C>`.
 #### Time Formatting
 
 Some databases support time/date columns that [support formatting][go-time]. By
-default, `usql` formats time/date columns as [RFC3339Nano][go-time], and can be
+default, `hardhatdb-cli` formats time/date columns as [RFC3339Nano][go-time], and can be
 set using `\pset time FORMAT`:
 
 ```sh
-$ usql pg://
+$ hardhatdb-cli pg://
 Connected with driver postgres (PostgreSQL 13.2 (Debian 13.2-1.pgdg100+1))
 Type "help" for help.
 
@@ -1186,13 +1209,13 @@ pg:postgres@=> select now();
 pg:postgres@=>
 ```
 
-`usql`'s time format supports any [Go supported time format][go-time], or can
+`hardhatdb-cli`'s time format supports any [Go supported time format][go-time], or can
 be any standard Go const name, such as `Kitchen` above. See below for an
 overview of the [available time constants](#time-constants).
 
 ##### Time Constants
 
-The following are the time constant names available in `usql`, corresponding
+The following are the time constant names available in `hardhatdb-cli`, corresponding
 time format value, and example display output:
 
 | Constant    |                                Format |        Display <sup>[↓][f-ts]</sup> |
@@ -1223,24 +1246,24 @@ time format value, and example display output:
 
 #### Host Connection Information
 
-By default, `usql` displays connection information when it connects to a
+By default, `hardhatdb-cli` displays connection information when it connects to a
 database. Some databases and connections do not work with this. Set the
 environment variable `HARDHATDB-CLI_SHOW_HOST_INFORMATION` to `false` to turn it off:
 
 ```sh
 $ export HARDHATDB-CLI_SHOW_HOST_INFORMATION=false
-$ usql pg://booktest@localhost
+$ hardhatdb-cli pg://booktest@localhost
 Type "help" for help.
 
 pg:booktest@=>
 ```
 
-`SHOW_HOST_INFORMATION` is a standard [`usql` variable][variables],
+`SHOW_HOST_INFORMATION` is a standard [`hardhatdb-cli` variable][variables],
 and can be `\set` or `\unset`. Additionally, it can be passed via the
 command-line using `-v` or `--set`:
 
 ```sh
-$ usql --set SHOW_HOST_INFORMATION=false pg://
+$ hardhatdb-cli --set SHOW_HOST_INFORMATION=false pg://
 Type "help" for help.
 
 pg:booktest@=> \set SHOW_HOST_INFORMATION true
@@ -1251,13 +1274,13 @@ pg:booktest@=>
 
 #### Terminal Graphics
 
-`usql` supports terminal graphics for [Kitty][kitty-graphics], [iTerm][iterm-graphics],
+`hardhatdb-cli` supports terminal graphics for [Kitty][kitty-graphics], [iTerm][iterm-graphics],
 and [Sixel][sixel-graphics] enabled terminals using the [`github.com/kenshaw/rasterm` package][rasterm].
 Terminal graphics are only available when using the interactive shell.
 
 ##### Detection and Support
 
-`usql` will attempt to detect when terminal graphics support is available using
+`hardhatdb-cli` will attempt to detect when terminal graphics support is available using
 the `HARDHATDB-CLI_TERM_GRAPHICS`, `TERM_GRAPHICS` and other environment variables
 unique to various terminals.
 
@@ -1292,10 +1315,10 @@ Terminal graphics can be forced enabled or disabled by setting the
 
 ```sh
 # disable
-$ HARDHATDB-CLI_TERM_GRAPHICS=none usql
+$ HARDHATDB-CLI_TERM_GRAPHICS=none hardhatdb-cli
 
 # force iterm graphics
-$ TERM_GRAPHICS=iterm usql
+$ TERM_GRAPHICS=iterm hardhatdb-cli
 ```
 
 | Variable        | Default | Values                                | Description                    |
@@ -1304,7 +1327,7 @@ $ TERM_GRAPHICS=iterm usql
 
 ##### Terminals with Graphics Support
 
-The following terminals have been tested with `usql`:
+The following terminals have been tested with `hardhatdb-cli`:
 
 - [WezTerm][wezterm] is a cross-platform terminal for Windows, macOS, Linux, and
   many other platforms that supports [iTerm][iterm-graphics] graphics
@@ -1323,15 +1346,15 @@ catalogued on the [Are We Sixel Yet?][arewesixelyet] website.
 
 #### Passwords
 
-`usql` supports reading passwords for databases from a `.usqlpass` file
+`hardhatdb-cli` supports reading passwords for databases from a `.hardhatdb-clipass` file
 contained in the user's `HOME` directory at startup:
 
 ```sh
-$ cat $HOME/.usqlpass
+$ cat $HOME/.hardhatdb-clipass
 # format is:
 # protocol:host:port:dbname:user:pass
 postgres:*:*:*:booktest:booktest
-$ usql pg://
+$ hardhatdb-cli pg://
 Connected with driver postgres (PostgreSQL 9.6.9)
 Type "help" for help.
 
@@ -1340,7 +1363,7 @@ pg:booktest@=>
 
 See [`_samples/usqlpass`](_samples/usqlpass) for a sample.
 
-While the `.usqlpass` functionality will not be removed, it is recommended to
+While the `.hardhatdb-clipass` functionality will not be removed, it is recommended to
 [define named connections][connection-vars] preferably via [the `config.yaml`
 file][config].
 
@@ -1348,18 +1371,18 @@ file][config].
 
 > **Note**
 >
-> The `.usqlpass` file must not be readable by other users. Set its permissions
+> The `.hardhatdb-clipass` file must not be readable by other users. Set its permissions
 > to `0600`:
 
 ```sh
-chmod 0600 ~/.usqlpass
+chmod 0600 ~/.hardhatdb-clipass
 ```
 
 <hr/>
 
 #### Runtime Configuration (RC) File
 
-`usql` supports executing a `.hardhatdb-clirc` runtime configuration (RC) file contained
+`hardhatdb-cli` supports executing a `.hardhatdb-clirc` runtime configuration (RC) file contained
 in the user's `HOME` directory:
 
 ```sh
@@ -1369,7 +1392,7 @@ $ cat $HOME/.hardhatdb-clirc
 
 -- set color prompt (default is prompt is "%S%m%/%R%#" )
 \set PROMPT1 "\033[32m%S%m%/%R%#\033[0m"
-$ usql
+$ hardhatdb-cli
 WELCOME TO THE JUNGLE Thu Jun 14 02:36:53 WIB 2018
 Type "help" for help.
 
@@ -1388,7 +1411,7 @@ RC-file execution can be temporarily disabled at startup by passing `-X` or
 `--no-init` on the command-line:
 
 ```sh
-$ usql --no-init pg://
+$ hardhatdb-cli --no-init pg://
 ```
 
 While the `.hardhatdb-clirc` functionality will not be removed, it is recommended to set
@@ -1396,7 +1419,7 @@ an `init` script in [the `config.yaml` file][config].
 
 ## Additional Notes
 
-The following are additional notes and miscellania related to `usql`:
+The following are additional notes and miscellania related to `hardhatdb-cli`:
 
 ### Release Builds
 
@@ -1416,11 +1439,11 @@ $ brew install icu4c
 
 The server could not meet the durability that the transaction asked for. By
 default a transaction asks for `majority`, which a single-node server cannot
-meet. `usql` does not change the durability unless you ask it to. Set `durability_level=none` in the URL for a single-node server,
+meet. `hardhatdb-cli` does not change the durability unless you ask it to. Set `durability_level=none` in the URL for a single-node server,
 such as a local development server:
 
 ```sh
-$ usql "couchbase://user:pass@localhost/?durability_level=none"
+$ hardhatdb-cli "couchbase://user:pass@localhost/?durability_level=none"
 ```
 
 The other values are `majority`, `majorityAndPersistActive` and
@@ -1429,16 +1452,16 @@ The other values are `majority`, `majorityAndPersistActive` and
 #### Why does a transaction stay open longer than the server's default?
 
 The server ends a transaction after 15 seconds by default, which is too short
-for a person typing into one. `usql` sets `txtimeout=30m` when the URL does not
+for a person typing into one. `hardhatdb-cli` sets `txtimeout=30m` when the URL does not
 set `txtimeout`. Set it in the URL to choose another value:
 
 ```sh
-$ usql "couchbase://user:pass@localhost/?txtimeout=2m"
+$ hardhatdb-cli "couchbase://user:pass@localhost/?txtimeout=2m"
 ```
 
 ## Contributing
 
-`usql` is currently a WIP, and is aiming towards a 1.0 release soon.
+`hardhatdb-cli` is currently a WIP, and is aiming towards a 1.0 release soon.
 Well-written PRs are always welcome -- and there is a clear backlog of issues
 marked `help wanted` on the GitHub issue tracker! For [technical details on
 contributing, see CONTRIBUTING.md](CONTRIBUTING.md).
@@ -1470,8 +1493,8 @@ contributing, see CONTRIBUTING.md](CONTRIBUTING.md).
 [highlighting]: #syntax-highlighting "Syntax Highlighting"
 [termgraphics]: #terminal-graphics "Terminal Graphics"
 [timefmt]: #time-formatting "Time Formatting"
-[usqlpass]: #passwords "Passwords"
-[usqlrc]: #runtime-configuration-rc-file "Runtime Configuration File"
+[hardhatdb-clipass]: #passwords "Passwords"
+[hardhatdb-clirc]: #runtime-configuration-rc-file "Runtime Configuration File"
 [variables]: #variables "Variables"
 [runtime-vars]: #runtime-variables "Runtime Variables"
 [connection-vars]: #connection-variables "Connection Variables"
