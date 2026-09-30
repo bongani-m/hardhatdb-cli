@@ -10,6 +10,10 @@
 
 *.ini
 *.csv
+# Fixtures the database tests read. The pattern above would drop them.
+!drivers/testdata/csvq/staff.csv
+!testdata/booktest/authors.csv
+!testdata/booktest/books.csv
 *.db
 *.zip
 *.out

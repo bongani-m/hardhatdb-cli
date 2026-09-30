@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bongani-m/hardhatdb-cli/drivers"
 	"github.com/bongani-m/hardhatdb-cli/env"
 	"github.com/bongani-m/hardhatdb-cli/handler"
 	"github.com/bongani-m/hardhatdb-cli/migrate"
@@ -315,12 +316,13 @@ func Run(ctx context.Context, args *Args) error {
 	defer l.Close()
 	// create handler
 	h := handler.New(l, u, wd, args.Charts, args.NoPassword)
-	// An interactive start with no DSN opens the local HardhatDB server.
-	// A command or file keeps the disconnected start, so a script does not
-	// dial 127.0.0.1 unless it names a DSN.
+	// An interactive start with no DSN opens the local HardhatDB server when
+	// that driver is in the binary. A build without it, and a command or
+	// file, keep the disconnected start, so a script does not dial
+	// 127.0.0.1 unless it names a DSN.
 	dsn := args.DSN
 	usedDefault := false
-	if dsn == "" && !forceNonInteractive && (interactive || cygwin) {
+	if dsn == "" && !forceNonInteractive && (interactive || cygwin) && drivers.Registered("hardhatdb") {
 		dsn = text.DefaultDSN
 		usedDefault = true
 	}
